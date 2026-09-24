@@ -1,0 +1,5 @@
+# `examples/` aqui é programa que roda — é o que `npm run demo` executa, e é a
+# primeira coisa que o README manda rodar. O Linguist trata examples/ como
+# documentação e tira da contagem de linguagens; isso é certo para um diretório
+# de prosa e errado para um executável.
+examples/**   linguist-documentation=false
