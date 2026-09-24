@@ -127,3 +127,18 @@ converge pass) ports to Postgres unchanged; `SELECT … FOR UPDATE SKIP LOCKED`
 replaces the claim transaction when more than one process is draining.
 
 Node 22+, TypeScript strict, no runtime dependency beyond the driver.
+
+## Languages
+
+TypeScript, 40,911 bytes — 100% of GitHub's language bar.
+
+The SQL is hand-written and real, but it is not a `.sql` file. The DDL lives in
+`src/schema.ts` as a template literal: the `operations` and `attempts` tables,
+the unique index on `(kind, idempotency_key)` that every guarantee above rests
+on, the indexes the claim scan and attempt lookups use, and the
+`journal_mode = WAL` and `foreign_keys = ON` pragmas. GitHub attributes it to
+the file it sits in.
+
+It is embedded because the build is `tsc` and nothing else. A `.sql` file would
+need a copy step into `dist`, and a schema that can go missing because a
+packaging step was skipped is a schema that eventually does.
