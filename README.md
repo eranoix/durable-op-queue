@@ -10,6 +10,8 @@ npm run demo
 ```
 
 ```
+resubmit of INV-001 created a new operation: false
+
 invoice    status      attempts  outcomes
 ─────────────────────────────────────────────────────────────
 INV-001   succeeded   1         applied
@@ -18,6 +20,7 @@ INV-003   failed      1         permanent
 INV-004   succeeded   2         retryable → noop
 
 charges actually applied at the provider: 3
+INV-003 never reached it; the other three were charged once each.
 ```
 
 ---
@@ -60,8 +63,10 @@ rejected, account closed — stops on the spot. Retrying it burns the attempt
 budget, delays everything queued behind it, and the answer never changes.
 
 **Backoff is exponential and capped.**
-Uncapped doubling reaches days by the tenth attempt, which in practice means
-the operation never runs again and nobody notices.
+Uncapped, doubling from the one-second base is eight and a half minutes by the
+tenth attempt and over a day by the eighteenth, which in practice means the
+operation never runs again and nobody notices. The cap defaults to five
+minutes.
 
 **A lease, not a reaper.**
 Claiming stamps an expiry. A worker that dies holding an operation has its rows
@@ -85,7 +90,10 @@ import { OperationQueue, PermanentFailure } from 'durable-op-queue';
 
 const queue = new OperationQueue({ path: './queue.db' });
 
-queue.register('charge', async ({ invoice, cents }, ctx) => {
+queue.register('charge', async (payload, ctx) => {
+  // The payload comes back as JSON, so the handler names the shape it expects.
+  const { invoice, cents } = payload as { invoice: string; cents: number };
+
   // On a retry, ask before acting. This is what lets the handler report
   // `noop` instead of charging twice.
   if (ctx.attemptNumber > 1 && (await provider.hasCharge(invoice))) {
@@ -115,9 +123,10 @@ npm test        # 20 tests
 npm run typecheck
 ```
 
-The clock is injected, so backoff is proven exactly rather than waited for: a
-five-minute delay is asserted in a millisecond. Each test opens its own
-in-memory database, so they cannot interfere and there is nothing to clean up.
+The clock is injected, so backoff is proven rather than waited for: a test
+asserts the whole sequence of gaps — 1s, 2s, 4s, 4s, 4s against a four-second
+cap — without any of that time passing. Each test opens its own in-memory
+database, so they cannot interfere and there is nothing to clean up.
 
 ## Scope
 
@@ -135,9 +144,10 @@ TypeScript, 40,911 bytes — 100% of GitHub's language bar.
 The SQL is hand-written and real, but it is not a `.sql` file. The DDL lives in
 `src/schema.ts` as a template literal: the `operations` and `attempts` tables,
 the unique index on `(kind, idempotency_key)` that every guarantee above rests
-on, the indexes the claim scan and attempt lookups use, and the
-`journal_mode = WAL` and `foreign_keys = ON` pragmas. GitHub attributes it to
-the file it sits in.
+on, and the indexes the claim scan and attempt lookups use. The
+`journal_mode = WAL` and `foreign_keys = ON` pragmas sit beside it in
+`migrate()`, as `db.pragma` calls made before the schema is applied. GitHub
+attributes it to the file it sits in.
 
 It is embedded because the build is `tsc` and nothing else. A `.sql` file would
 need a copy step into `dist`, and a schema that can go missing because a
