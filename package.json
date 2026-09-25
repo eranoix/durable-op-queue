@@ -1,5 +1,5 @@
 {
-  "name": "durable-op-queue",
+  "name": "reliable-task-queue",
   "version": "1.0.0",
   "description": "An idempotent, durable operation queue for effects that must happen exactly once against an external system.",
   "type": "module",

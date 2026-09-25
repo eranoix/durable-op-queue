@@ -1,4 +1,8 @@
-# durable-op-queue
+# reliable-task-queue
+
+**A task queue that makes sure each job, like a payment, happens exactly once, even when something crashes.**
+
+*In plain words:* Some actions must happen exactly once: charging a card twice, or not at all, is a real problem for a real person. Computers crash and connections drop, so a job can be cut off halfway through. This queue keeps a careful record of every job, so after a crash it knows what already happened and finishes only what is missing. It is a building block for apps that handle money or other actions that must never be repeated.
 
 An idempotent, durable operation queue for effects that must happen **exactly
 once** against a system you do not control — charge a card, create a remote
@@ -86,7 +90,7 @@ did the work, not this attempt.
 ## Using it
 
 ```ts
-import { OperationQueue, PermanentFailure } from 'durable-op-queue';
+import { OperationQueue, PermanentFailure } from 'reliable-task-queue';
 
 const queue = new OperationQueue({ path: './queue.db' });
 
