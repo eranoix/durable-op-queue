@@ -1,5 +1,7 @@
 # reliable-task-queue
 
+[![CI](https://github.com/eranoix/reliable-task-queue/actions/workflows/ci.yml/badge.svg)](https://github.com/eranoix/reliable-task-queue/actions/workflows/ci.yml) [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE) ![node 22+](https://img.shields.io/badge/node-22%2B-339933?logo=nodedotjs&logoColor=white) ![TypeScript strict](https://img.shields.io/badge/TypeScript-strict-3178C6?logo=typescript&logoColor=white)
+
 **A task queue that makes sure each job, like a payment, happens exactly once, even when something crashes.**
 
 *In plain words:* Some actions must happen exactly once: charging a card twice, or not at all, is a real problem for a real person. Computers crash and connections drop, so a job can be cut off halfway through. This queue keeps a careful record of every job, so after a crash it knows what already happened and finishes only what is missing. It is a building block for apps that handle money or other actions that must never be repeated.
