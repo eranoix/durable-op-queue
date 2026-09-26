@@ -1,5 +1,5 @@
-# `examples/` aqui é programa que roda — é o que `npm run demo` executa, e é a
-# primeira coisa que o README manda rodar. O Linguist trata examples/ como
-# documentação e tira da contagem de linguagens; isso é certo para um diretório
-# de prosa e errado para um executável.
+# `examples/` here is a program that runs: it is what `npm run demo` executes,
+# and the first thing the README tells you to run. Linguist treats examples/ as
+# documentation and leaves it out of the language count; that is right for a
+# directory of prose and wrong for an executable.
 examples/**   linguist-documentation=false
