@@ -26,9 +26,6 @@ describe('identity', () => {
   });
 
   it('keeps the payload of the operation that already exists', () => {
-    // Two callers claiming the same identity disagree about what the operation
-    // is. The one already scheduled may be mid-flight, so adopting the second
-    // payload would change work in progress.
     const { queue } = setup();
     queue.submit({ idempotencyKey: 'inv-1', kind: 'charge', payload: { cents: 500 } });
     const second = queue.submit({
@@ -64,16 +61,12 @@ describe('execution', () => {
 
     expect(calls).toBe(1);
     expect(first.applied).toBe(1);
-    // A succeeded operation is not claimable again, so a second pass is a
-    // no-op. Without that, every scheduler tick would re-run finished work.
     expect(second.claimed).toBe(0);
     expect(queue.get('charge', 'inv-1')?.status).toBe('succeeded');
   });
 
   it('distinguishes noop from applied and still settles as done', async () => {
-    // The crash-window case: the effect landed, our row did not hear about it.
-    // The retry finds the work present. That is success, and it must not be
-    // recorded as a second application.
+    // The crash window: the effect landed but our row was never updated.
     const { queue } = setup();
     queue.register('folder', async () => ({ outcome: 'noop', detail: 'already existed' }));
     const { operation } = queue.submit({ idempotencyKey: 'f-1', kind: 'folder' });
@@ -157,8 +150,6 @@ describe('retry and backoff', () => {
   });
 
   it('stops immediately on a permanent failure without spending the budget', async () => {
-    // Retrying a validation rejection wastes attempts and delays everything
-    // queued behind it, and the answer never changes.
     const { queue, advance } = setup();
     let calls = 0;
     queue.register('charge', async () => {
@@ -190,8 +181,6 @@ describe('retry and backoff', () => {
 
 describe('attempt history', () => {
   it('keeps every attempt rather than overwriting the last one', async () => {
-    // "Failed four times then worked" and "worked" are different facts, and
-    // only the first says the provider is unwell.
     const { queue, advance } = setup();
     let calls = 0;
     queue.register('charge', async () => {
@@ -224,8 +213,6 @@ describe('expiry', () => {
   });
 
   it('never hands an expired operation to a handler', async () => {
-    // Doing the work and only then noticing it was too late is the worst
-    // outcome available: the effect happened and the record denies it.
     const { queue, advance } = setup();
     let calls = 0;
     queue.register('charge', async () => {
@@ -244,9 +231,7 @@ describe('expiry', () => {
 
 describe('leases', () => {
   it('reclaims work from a worker that died mid-flight', async () => {
-    // Simulates a crash by claiming and never settling: the row stays
-    // `running` with a lease. Once the lease lapses it becomes claimable
-    // again, with no reaper process and no operator involvement.
+    // Simulates a crash by claiming and never settling, leaving the row leased.
     const { queue, advance } = setup({ leaseMs: 10_000 });
     let calls = 0;
     let hang = true;
@@ -271,8 +256,7 @@ describe('leases', () => {
 
 describe('converge', () => {
   it('settles an operation the provider already completed', async () => {
-    // The torn-write case. Our record says failed; the provider says done.
-    // The provider is the authority on its own state.
+    // Torn write: our record says failed, the provider says done.
     const { queue, advance } = setup();
     queue.register('folder', async () => {
       throw new PermanentFailure('connection reset after the write landed');
@@ -333,9 +317,6 @@ describe('batching', () => {
 
 describe('regressions', () => {
   it('refuses a handler that returns an invalid outcome', async () => {
-    // Found by an adversarial probe: a typo'd outcome was recorded as success
-    // and written verbatim into the attempts table, so the audit trail this
-    // queue exists to keep became untrustworthy with nothing reporting it.
     const { queue, advance } = setup();
     queue.register('charge', async () => ({ outcome: 'nonsense' } as never));
     const { operation } = queue.submit({ idempotencyKey: 'x', kind: 'charge' });
@@ -345,7 +326,7 @@ describe('regressions', () => {
     const op = queue.get('charge', 'x')!;
     expect(op.status).toBe('failed');
     expect(op.lastError).toMatch(/invalid outcome/);
-    // And it is permanent: a handler with a typo will not fix itself on retry.
+    // Permanent: no retry.
     expect(queue.attemptsOf(operation.id)).toHaveLength(1);
   });
 });

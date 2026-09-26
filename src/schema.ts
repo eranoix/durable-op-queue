@@ -1,12 +1,7 @@
 /**
- * Schema.
- *
- * The important line is the unique index on (kind, idempotency_key). Every
- * guarantee this queue makes rests on the DATABASE refusing a duplicate, not
- * on application code checking first and inserting second. That check-then-act
- * pattern is a race with a comfortable disguise: two workers both find nothing,
- * both insert, and the effect happens twice — reliably, under exactly the load
- * where it hurts most.
+ * Every guarantee rests on the unique index on (kind, idempotency_key): the
+ * database refuses duplicates, because an application-level check-then-insert
+ * races under concurrent submits.
  */
 
 import type { Database } from 'better-sqlite3';
@@ -53,11 +48,9 @@ CREATE INDEX IF NOT EXISTS attempts_by_operation
 `;
 
 export function migrate(db: Database): void {
-  // WAL lets a reader (a dashboard, an operator running a query) look at the
-  // queue while workers are writing, instead of being blocked by them.
+  // WAL lets readers inspect the queue while workers write.
   db.pragma('journal_mode = WAL');
-  // Without this, the cascade on attempts is decorative: SQLite parses the
-  // clause and then does not enforce it unless foreign keys are switched on.
+  // SQLite does not enforce ON DELETE CASCADE unless foreign keys are enabled.
   db.pragma('foreign_keys = ON');
   db.exec(SCHEMA);
 }

@@ -1,12 +1,6 @@
 /**
- * A provider that behaves the way real ones do, so the queue's answer to each
- * behaviour is visible rather than described.
- *
- *   npm run demo
- *
- * Four invoices go in. The provider times out, succeeds, rejects permanently,
- * and — the interesting one — applies a change and then drops the connection
- * before answering, leaving the caller unable to tell whether it worked.
+ * Demo (`npm run demo`): four invoices against a provider that succeeds, times
+ * out, rejects permanently, and applies a charge then drops the connection.
  */
 
 import { OperationQueue, PermanentFailure } from '../src/index.js';
@@ -25,9 +19,7 @@ let timeouts = 0;
 queue.register('charge', async (payload, ctx) => {
   const { invoice } = payload as { invoice: string };
 
-  // On a retry, ask first. This is the discipline the whole design depends on:
-  // a handler that checks before acting can report `noop` instead of charging
-  // a second time.
+  // On a retry, check first so an already-applied charge reports `noop`.
   if (ctx.attemptNumber > 1 && charged.has(invoice)) {
     return { outcome: 'noop', detail: 'provider already had it' };
   }
@@ -55,8 +47,7 @@ for (const invoice of ['INV-001', 'INV-002', 'INV-003', 'INV-004']) {
   queue.submit({ idempotencyKey: invoice, kind: 'charge', payload: { invoice }, maxAttempts: 5 });
 }
 
-// Submitting the same intent again, the way a caller retrying a timed-out API
-// call would. It must not become a second charge.
+// A caller retrying a timed-out submit must not create a second charge.
 const again = queue.submit({
   idempotencyKey: 'INV-001', kind: 'charge', payload: { invoice: 'INV-001' },
 });

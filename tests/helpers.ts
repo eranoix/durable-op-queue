@@ -1,12 +1,6 @@
 import { OperationQueue, type QueueOptions } from '../src/index.js';
 
-/**
- * A queue on a controllable clock.
- *
- * Backoff is the behaviour most worth testing and the least worth waiting for.
- * Injecting time means a test can prove a five-minute backoff in a millisecond,
- * and prove it exactly rather than approximately.
- */
+/** A queue on a controllable clock, so backoff is tested exactly without waiting. */
 export function makeQueue(opts: Partial<QueueOptions> = {}) {
   let clock = 1_700_000_000_000;
   const queue = new OperationQueue({

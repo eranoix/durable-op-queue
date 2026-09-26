@@ -1,17 +1,7 @@
 /**
- * The queue.
- *
- * It exists for effects that must happen exactly once against a system you do
- * not control — charge a card, create a remote folder, send a statement — where
- * the process can die at any instant and the provider has no memory of your
- * intent, only of what you asked it to do.
- *
- * The hard part is never the happy path. It is the window between "the
- * provider applied the change" and "our row says so". A crash in that window
- * leaves a completed effect that our database believes is still owed. Retrying
- * blind charges twice; not retrying loses work silently. Neither is acceptable,
- * so the handler is required to distinguish "I made this change" from "it was
- * already there", and the queue records the difference.
+ * A durable queue for effects that must happen exactly once against an
+ * external system. A crash between the provider applying a change and the row
+ * recording it is handled by requiring handlers to report `applied` vs `noop`.
  */
 
 import Database from 'better-sqlite3';
@@ -109,18 +99,11 @@ export class OperationQueue {
   }
 
   /**
-   * Record an intent.
+   * Record an intent. Idempotent per (kind, key): a repeat returns the existing
+   * operation with `created: false`.
    *
-   * Safe to call repeatedly with the same key: the second call returns the
-   * existing operation with `created: false` rather than queueing a duplicate.
-   * That is what lets a caller retry a submit after a timeout without knowing
-   * whether the first one landed — the common case that makes callers invent
-   * their own fragile deduplication.
-   *
-   * The payload of an existing operation is NOT overwritten. Two callers
-   * claiming the same identity with different payloads disagree about what the
-   * operation is, and the first one to arrive is the one already scheduled;
-   * silently adopting the second would change work that may be mid-flight.
+   * The payload of an existing operation is NOT overwritten, since that work
+   * may already be in flight.
    */
   submit(opts: SubmitOptions): SubmitResult {
     const now = this.now();
@@ -146,9 +129,8 @@ export class OperationQueue {
         now,
       );
 
-    // A concurrent submit can win between the lookup above and this insert.
-    // The unique index turns that race into a no-op, and we read back whatever
-    // is actually there rather than trusting our own view of a moment ago.
+    // A concurrent submit can win between the lookup and this insert; the
+    // unique index absorbs it, so read back whatever is actually there.
     if (info.changes === 0) {
       const raced = this.findByIdentity(opts.kind, opts.idempotencyKey);
       if (!raced) throw new Error('submit: insert absorbed but no row found');
@@ -161,11 +143,8 @@ export class OperationQueue {
   }
 
   /**
-   * Run one pass over everything currently due.
-   *
-   * A pass is bounded: it claims what is eligible now and stops. Callers decide
-   * the cadence, which keeps this a library rather than a daemon, and makes it
-   * trivial to drive deterministically from a test.
+   * Run one bounded pass over everything currently due. The caller decides the
+   * cadence; there is no background loop.
    */
   async runOnce(limit = 50): Promise<RunSummary> {
     const summary: RunSummary = {
@@ -187,9 +166,7 @@ export class OperationQueue {
 
   /**
    * Drain until nothing is left to do, advancing a test clock over backoff.
-   *
-   * Only useful when `now` is injected: real time cannot be skipped, and a
-   * production caller should run `runOnce` on a schedule instead.
+   * Only useful when `now` is injected; production callers use `runOnce`.
    */
   async drain(advance: (ms: number) => void, maxPasses = 100): Promise<RunSummary> {
     const total: RunSummary = {
@@ -200,8 +177,7 @@ export class OperationQueue {
       for (const k of Object.keys(total) as (keyof RunSummary)[]) total[k] += pass[k];
       if (this.countPending() === 0) break;
       if (pass.claimed === 0) {
-        // Nothing was due. Jump to whenever the earliest pending row becomes
-        // eligible, rather than stepping a fixed amount and hoping.
+        // Nothing was due: jump straight to the earliest pending row.
         const next = this.earliestNextAttempt();
         if (next == null) break;
         advance(Math.max(1, next - this.now()));
@@ -211,16 +187,9 @@ export class OperationQueue {
   }
 
   /**
-   * Reconcile against the provider's own view of the world.
-   *
-   * Everything else here assumes our record of what happened is complete. This
-   * is the escape hatch for when it is not: an operation stuck in `running`
-   * because the worker died mid-flight, a `failed` one that the provider
-   * actually completed on its last attempt before the connection dropped.
-   *
-   * The probe answers "does this already exist on your side?" and the queue
-   * settles the row accordingly. Without a pass like this, the only way back
-   * from a torn write is someone reading logs by hand.
+   * Reconcile against the provider's own view, for rows whose local record is
+   * incomplete (stuck `running`, or `failed` although the provider completed
+   * it). Rows the probe reports as present are settled as succeeded.
    */
   async converge(
     kind: string,
@@ -250,8 +219,6 @@ export class OperationQueue {
     }
     return { checked: rows.length, settled };
   }
-
-  // ── reads ────────────────────────────────────────────────────────────────
 
   get(kind: string, idempotencyKey: string): Operation | null {
     return this.findByIdentity(kind, idempotencyKey);
@@ -283,8 +250,6 @@ export class OperationQueue {
     return row?.n ?? 0;
   }
 
-  // ── internals ────────────────────────────────────────────────────────────
-
   private findByIdentity(kind: string, key: string): Operation | null {
     const row = this.db
       .prepare<[string, string], OperationRow>(
@@ -310,11 +275,8 @@ export class OperationQueue {
   }
 
   /**
-   * Abandon operations whose deadline passed.
-   *
-   * Checked before claiming, so an expired operation is never handed to a
-   * worker: doing the work and then discovering it was too late is the worst
-   * of both outcomes — the effect happened, and the record says it did not.
+   * Abandon operations whose deadline passed. Runs before claiming so an
+   * expired operation is never handed to a worker.
    */
   private expireOverdue(): number {
     const now = this.now();
@@ -330,12 +292,9 @@ export class OperationQueue {
   }
 
   /**
-   * Take ownership of due operations.
-   *
-   * The claim is a single UPDATE that flips status and stamps a lease, so two
-   * workers cannot both take the same row. The lease is what makes a crashed
-   * worker recoverable: its rows become claimable again once the lease lapses,
-   * with no operator involvement and no separate reaper process.
+   * Take ownership of due operations. Each claim is a conditional UPDATE that
+   * stamps a lease, so two workers cannot take the same row, and a crashed
+   * worker's rows become claimable again once the lease lapses.
    */
   private claim(limit: number): Operation[] {
     const now = this.now();
@@ -375,8 +334,7 @@ export class OperationQueue {
     const startedAt = this.now();
 
     if (!handler) {
-      // No handler is a deployment mistake, not a transient fault. Retrying
-      // cannot fix it, and burning the attempt budget hides it.
+      // A missing handler is a deployment mistake; retrying cannot fix it.
       this.settleFailed(op, attemptNumber, `no handler registered for kind "${op.kind}"`, startedAt);
       return 'permanent';
     }
@@ -388,15 +346,9 @@ export class OperationQueue {
         attemptNumber,
       });
 
-      // Validate what came back. An adversarial probe found that a handler
-      // returning a typo'd outcome was recorded as a success, with the
-      // nonsense value written into the attempts table -- so the audit trail
-      // this queue exists to keep became quietly untrustworthy, and nothing
-      // reported it. Types do not help here: the handler may be JavaScript,
-      // or the value may come from a network reply.
-      // Widened deliberately: the declared type says this cannot happen, and
-      // at runtime it can -- the handler may be JavaScript, or the value may
-      // have come off a network reply.
+      // Validated at runtime despite the declared type: the handler may be
+      // JavaScript, or the value may come off a network reply, and an invalid
+      // outcome must not be recorded as a success.
       const outcome = (result as { outcome?: unknown } | null | undefined)?.outcome;
       if (outcome !== 'applied' && outcome !== 'noop') {
         throw new PermanentFailure(
@@ -483,11 +435,8 @@ export class OperationQueue {
   }
 
   /**
-   * Exponential backoff, capped.
-   *
-   * Uncapped doubling reaches days by the tenth attempt, which in practice
-   * means the operation never runs again and nobody notices. The cap keeps a
-   * long-lived retry loop polling at a rate a recovering provider can absorb.
+   * Exponential backoff, capped so long retry loops keep polling at a sane rate
+   * instead of drifting to days between attempts.
    */
   private backoffFor(attemptNumber: number): number {
     return Math.min(this.backoffBaseMs * 2 ** (attemptNumber - 1), this.backoffCapMs);
