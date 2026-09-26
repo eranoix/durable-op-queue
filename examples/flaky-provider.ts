@@ -66,7 +66,7 @@ await queue.drain((ms) => {
   clock += ms;
 });
 
-console.log('invoice    status      attempts  outcomes');
+console.log('invoice   status      attempts  outcomes');
 console.log('─────────────────────────────────────────────────────────────');
 for (const invoice of ['INV-001', 'INV-002', 'INV-003', 'INV-004']) {
   const op = queue.get('charge', invoice);

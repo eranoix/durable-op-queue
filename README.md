@@ -5,18 +5,29 @@
 *In plain words:* Some actions must happen exactly once: charging a card twice, or not at all, is a real problem for a real person. Computers crash and connections drop, so a job can be cut off halfway through. This queue keeps a careful record of every job, so after a crash it knows what already happened and finishes only what is missing. It is a building block for apps that handle money or other actions that must never be repeated.
 
 An idempotent, durable operation queue for effects that must happen **exactly
-once** against a system you do not control — charge a card, create a remote
+once** against a system you do not control: charge a card, create a remote
 folder, send a statement.
+
+Needs Node.js 22 or newer.
 
 ```bash
 npm install
 npm run demo
 ```
 
+The demo sends four invoices through a provider that times out, succeeds,
+declines, and applies a charge before dropping the connection. The first line
+is the same invoice submitted a second time, which the queue refuses to queue
+again:
+
+<p align="center"><img src="docs/screenshots/01-demo.png" width="49%" alt="npm run demo: the resubmitted invoice creates no new operation, and each invoice is charged at most once"> <img src="docs/screenshots/01-demo-dark.png" width="49%" alt="npm run demo: the resubmitted invoice creates no new operation, and each invoice is charged at most once (dark)"></p>
+
+<details><summary>The same output as text</summary>
+
 ```
 resubmit of INV-001 created a new operation: false
 
-invoice    status      attempts  outcomes
+invoice   status      attempts  outcomes
 ─────────────────────────────────────────────────────────────
 INV-001   succeeded   1         applied
 INV-002   succeeded   3         retryable → retryable → applied
@@ -26,6 +37,8 @@ INV-004   succeeded   2         retryable → noop
 charges actually applied at the provider: 3
 INV-003 never reached it; the other three were charged once each.
 ```
+
+</details>
 
 ---
 
@@ -52,7 +65,7 @@ apart is what makes "exactly once" a fact rather than a hope.
 
 **Identity lives in the database, not in application code.**
 A unique index on `(kind, idempotency_key)` refuses the duplicate. The
-alternative — check whether it exists, then insert — is a race wearing a
+alternative (check whether it exists, then insert) is a race wearing a
 comfortable disguise: two workers both find nothing, both insert, and the
 effect happens twice, reliably, under exactly the load where it hurts most.
 
@@ -62,8 +75,8 @@ overwrites the one before. "Failed four times and then worked" and "worked"
 are different facts, and only the first one tells you the provider is unwell.
 
 **Failure has two kinds and they are not treated alike.**
-A timeout backs off and tries again. A `PermanentFailure` — validation
-rejected, account closed — stops on the spot. Retrying it burns the attempt
+A timeout backs off and tries again. A `PermanentFailure` (validation
+rejected, account closed) stops on the spot. Retrying it burns the attempt
 budget, delays everything queued behind it, and the answer never changes.
 
 **Backoff is exponential and capped.**
@@ -74,7 +87,7 @@ minutes.
 
 **A lease, not a reaper.**
 Claiming stamps an expiry. A worker that dies holding an operation has its rows
-become claimable again once the lease lapses — no separate process to run, and
+become claimable again once the lease lapses: no separate process to run, and
 nothing for an operator to do at 3am.
 
 **Expiry is checked before claiming, never after.**
@@ -84,7 +97,7 @@ outcome available: the effect happened and the record denies it.
 **`converge` is the way back from a torn write.**
 Everything above assumes our record of what happened is complete. When it is
 not, `converge` asks the provider *does this already exist on your side?* and
-settles the row against the answer — recorded as `noop`, because the provider
+settles the row against the answer, recorded as `noop`, because the provider
 did the work, not this attempt.
 
 ## Using it
@@ -128,13 +141,13 @@ npm run typecheck
 ```
 
 The clock is injected, so backoff is proven rather than waited for: a test
-asserts the whole sequence of gaps — 1s, 2s, 4s, 4s, 4s against a four-second
-cap — without any of that time passing. Each test opens its own in-memory
+asserts the whole sequence of gaps (1s, 2s, 4s, 4s, 4s against a four-second
+cap) without any of that time passing. Each test opens its own in-memory
 database, so they cannot interfere and there is nothing to clean up.
 
 ## Scope
 
-SQLite via `better-sqlite3` — no service to provision, and the whole thing runs
+SQLite via `better-sqlite3`: no service to provision, and the whole thing runs
 in one process. The shape (identity index, attempt rows, lease, backoff,
 converge pass) ports to Postgres unchanged; `SELECT … FOR UPDATE SKIP LOCKED`
 replaces the claim transaction when more than one process is draining.
@@ -143,7 +156,7 @@ Node 22+, TypeScript strict, no runtime dependency beyond the driver.
 
 ## Languages
 
-TypeScript, 40,911 bytes — 100% of GitHub's language bar.
+TypeScript, 40,911 bytes: 100% of GitHub's language bar.
 
 The SQL is hand-written and real, but it is not a `.sql` file. The DDL lives in
 `src/schema.ts` as a template literal: the `operations` and `attempts` tables,
